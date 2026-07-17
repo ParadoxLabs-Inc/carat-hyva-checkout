@@ -72,7 +72,15 @@ Pre-release Caveats / TODO
 
 * **No runtime QA yet.** This module has not been exercised against a live Hyva Checkout install or
   the Commerce Hub CERT sandbox. Unit tests and static analysis pass, but end-to-end tokenization
-  and order placement remain to be verified in a browser.
+  and order placement remain to be verified in a browser. Runtime QA checklist:
+    * New-card tokenization and order placement (guest + logged in, save on/off)
+    * Stored-card placement, with and without Require CCV
+    * Verify the SDK `onFieldValidityChange` hook fires on valid→valid edits (e.g. editing the
+      name-on-card field while the form stays valid) — if it does not, a previously tokenized
+      session could carry pre-edit card data; if so, invalidate the session on a form-change
+      signal that does fire
+    * Placement failure path: session cleared, form reset, retry succeeds
+    * Method switch away/back and billing-step round trips (hosted-field re-mount)
 * **No customer-account payment options (paymentinfo) support.** The TokenBase "My Payment
   Options" page is Luma-only for Carat; this module removes its nav link on Hyva themes
   (`view/frontend/layout/hyva_customer_account.xml`). Implementing Hyva paymentinfo support is a

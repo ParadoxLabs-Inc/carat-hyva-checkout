@@ -41,6 +41,7 @@ $tBadCvv       = $escaper->escapeJs(__('Please enter a valid security code.'));
 $tLoadFailed   = $escaper->escapeJs(__('The payment form failed to load. Please reload and try again.'));
 $tCompleteForm = $escaper->escapeJs(__('Please complete the payment form.'));
 $tCardFailed   = $escaper->escapeJs(__('Unable to verify the card. Please check the card details and try again.'));
+$tSubmitFailed = $escaper->escapeJs(__('Unable to submit payment data. Please try again.'));
 
 $inlineScript = <<<JS
     'use strict';
@@ -120,6 +121,12 @@ $inlineScript = <<<JS
                 listeners.orderError = this.handleOrderError.bind(this);
                 window.addEventListener('order:place:{$code}:error', listeners.orderError);
 
+                // Scrub the stored-card CVV from session storage once place-order settles, so it
+                // never persists at rest beyond the attempt (handleOrderError covers failures).
+                window.removeEventListener('order:place:success', listeners.orderSuccess);
+                listeners.orderSuccess = this.scrubStoredCvv.bind(this);
+                window.addEventListener('order:place:success', listeners.orderSuccess);
+
                 // Hyva dispatches this on window (init-payment.phtml). Re-mount the hosted fields
                 // if a Magewire morph or method switch wiped the iframes.
                 window.removeEventListener('checkout:payment:method-activate', listeners.methodActivate);
@@ -179,9 +186,17 @@ $inlineScript = <<<JS
                     return;
                 }
 
+                // Window-scoped mount-in-flight guard: x-init and the method-activate hook can
+                // both request a mount before either resolves (the sync isFormMounted() check
+                // cannot see past the async SDK load), so concurrent callers share one mount
+                // instead of double-mounting into the same containers.
+                if (window['{$code}MountPromise']) {
+                    return;
+                }
+
                 this.destroyHostedForm();
 
-                this.loadSdk()
+                window['{$code}MountPromise'] = this.loadSdk()
                     .then(fiserv => fiserv.components.paymentFields({
                         data: {
                             environment: this.config.environment,
@@ -194,9 +209,11 @@ $inlineScript = <<<JS
                         }
                     }))
                     .then(form => {
+                        window['{$code}MountPromise'] = null;
                         this.hostedForm = form;
                     })
                     .catch(error => {
+                        window['{$code}MountPromise'] = null;
                         console.error(error);
                         this.error.general = '{$tLoadFailed}';
                     });
@@ -327,13 +344,19 @@ $inlineScript = <<<JS
                         source: 'checkout'
                     })
                 })
-                    .then(response => response.json().then(params => {
-                        if (!response.ok) {
-                            throw new Error(params && params.message ? params.message : '{$tCardFailed}');
-                        }
+                    .then(response => response.json()
+                        .catch(() => {
+                            // Non-JSON body (WAF block page, HTML 500): never surface the raw
+                            // parser error to the customer.
+                            throw new Error('{$tCardFailed}');
+                        })
+                        .then(params => {
+                            if (!response.ok) {
+                                throw new Error(params && params.message ? params.message : '{$tCardFailed}');
+                            }
 
-                        return params;
-                    }))
+                            return params;
+                        }))
                     .then(params => this.hostedForm.submit({
                         apiKey: params.apiKey,
                         accessToken: params.credentials.accessToken,
@@ -370,9 +393,14 @@ $inlineScript = <<<JS
                     payload.session_id = this.sessionId;
                 }
 
-                hyvaCheckout.storage.setValue('payment', payload);
-
-                this.promise.resolve(true);
+                // setValue is async and can reject (storage unavailable/full); never resolve the
+                // validator until the payload is actually stored.
+                hyvaCheckout.storage.setValue('payment', payload)
+                    .then(() => this.promise.resolve(true))
+                    .catch(error => {
+                        console.error(error);
+                        this.failValidation('{$tSubmitFailed}');
+                    });
             },
             failValidation: function(message) {
                 this.tokenizing = false;
@@ -388,6 +416,20 @@ $inlineScript = <<<JS
 
                 if (this.hostedForm && typeof this.hostedForm.reset === 'function') {
                     this.hostedForm.reset();
+                }
+
+                this.scrubStoredCvv();
+            },
+            /**
+             * Remove the stored-card CVV from the persisted payment payload once place-order has
+             * settled, so it does not sit in sessionStorage at rest.
+             */
+            scrubStoredCvv: function() {
+                const payload = hyvaCheckout.storage.getValue('payment');
+
+                if (payload && typeof payload === 'object' && payload.cc_cid) {
+                    payload.cc_cid = '';
+                    hyvaCheckout.storage.setValue('payment', payload).catch(() => {});
                 }
             },
             changeSelectedCard: function() {
