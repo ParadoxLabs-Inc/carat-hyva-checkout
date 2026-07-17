@@ -47,7 +47,12 @@ Architecture
   `payment_method_assign_data` observer chain runs before order placement.
 * Payment sessions are amount-agnostic; the charge amount is set server-side at sale, so no
   client-side total-drift handling is required. A session cannot be reused after a failed charge —
-  the `order:place:paradoxlabs_carat:error` event clears it and resets the form.
+  the `order:place:paradoxlabs_carat:error` event clears it and resets the form, and the validator
+  additionally invalidates any previously submitted session before a retry.
+* `PlaceOrderService::handleException()` accepts placement failures instead of rethrowing: the
+  Magewire request completes normally (delivering the queued `order:place:*:error` browser
+  events), `evaluateCompletion()` surfaces the real decline message through the messenger, and
+  `canRedirect()` blocks the success-page redirect for the failed attempt.
 
 Installation and Usage
 ======================

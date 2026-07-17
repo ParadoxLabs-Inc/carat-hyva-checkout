@@ -72,6 +72,7 @@ $inlineScript = <<<JS
             storedCards: this.\$wire.entangle('storedCards'),
             selectedCard: '',
             sessionId: '',
+            payloadSubmitted: false,
             save: true,
             ccCid: '',
             hostedForm: null,
@@ -307,6 +308,16 @@ $inlineScript = <<<JS
                 this.promise.reject  = event.detail.reject;
                 this.error.general   = '';
 
+                // Belt-and-braces alongside the order:place error event: this validator only
+                // re-runs after a previous attempt settled without success, so anything that
+                // attempt submitted is spent — never resubmit its session (re-mint below), and
+                // scrub its CVV from session storage (re-added just-in-time if still needed).
+                if (this.payloadSubmitted) {
+                    this.payloadSubmitted = false;
+                    this.sessionId = '';
+                    this.scrubStoredCvv();
+                }
+
                 if (this.selectedCard) {
                     if (this.config.requireCcv
                         && this.ccCid.length !== this.state.cc_cid_length) {
@@ -396,7 +407,10 @@ $inlineScript = <<<JS
                 // setValue is async and can reject (storage unavailable/full); never resolve the
                 // validator until the payload is actually stored.
                 hyvaCheckout.storage.setValue('payment', payload)
-                    .then(() => this.promise.resolve(true))
+                    .then(() => {
+                        this.payloadSubmitted = true;
+                        this.promise.resolve(true);
+                    })
                     .catch(error => {
                         console.error(error);
                         this.failValidation('{$tSubmitFailed}');

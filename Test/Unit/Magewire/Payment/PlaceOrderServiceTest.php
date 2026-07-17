@@ -4,11 +4,16 @@ declare(strict_types=1);
 
 namespace ParadoxLabs\CaratHyvaCheckout\Test\Unit\Magewire\Payment;
 
+use Hyva\Checkout\Model\Magewire\Component\Evaluation\ErrorMessage;
+use Hyva\Checkout\Model\Magewire\Component\Evaluation\Success;
+use Hyva\Checkout\Model\Magewire\Component\EvaluationResultFactory;
 use Hyva\Checkout\Model\Magewire\Payment\DefaultOrderData;
+use Magento\Framework\Exception\LocalizedException;
 use Magento\Quote\Api\CartManagementInterface;
 use Magento\Quote\Api\Data\PaymentInterface;
 use Magento\Quote\Model\Quote;
 use Magento\Quote\Model\Quote\Payment as QuotePayment;
+use Magewirephp\Magewire\Component;
 use ParadoxLabs\CaratHyvaCheckout\Magewire\Payment\PlaceOrderService;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
@@ -137,5 +142,76 @@ class PlaceOrderServiceTest extends TestCase
         $this->cartManagement->method('placeOrder')->willReturn('5');
 
         $this->assertSame(5, $this->service->placeOrder($this->quote));
+    }
+
+    /**
+     * handleException must NOT rethrow: a rethrow aborts the Magewire request with a bare
+     * {message, code} JSON, discarding the order:place:{method}:error browser events the
+     * processor queued just before calling it. Completing normally is what delivers them.
+     */
+    public function testHandleExceptionDoesNotRethrowAndBlocksRedirect(): void
+    {
+        $this->assertTrue($this->service->canRedirect());
+
+        $this->service->handleException(
+            new \Exception('gateway boom'),
+            $this->createMock(Component::class),
+            $this->quote
+        );
+
+        // Reaching this point proves no rethrow; the failed attempt must not redirect either.
+        $this->assertFalse($this->service->canRedirect());
+    }
+
+    public function testEvaluateCompletionAfterLocalizedFailureShowsRealMessage(): void
+    {
+        $this->service->handleException(
+            new LocalizedException(__('Card declined.')),
+            $this->createMock(Component::class),
+            $this->quote
+        );
+
+        $errorMessage = $this->createMock(ErrorMessage::class);
+        $errorMessage->expects($this->once())->method('withMessage')->with('Card declined.');
+
+        $resultFactory = $this->createMock(EvaluationResultFactory::class);
+        $resultFactory->method('createErrorMessage')->willReturn($errorMessage);
+        $resultFactory->expects($this->never())->method('createSuccess');
+
+        $this->assertSame($errorMessage, $this->service->evaluateCompletion($resultFactory));
+    }
+
+    public function testEvaluateCompletionAfterGenericFailureShowsGenericMessage(): void
+    {
+        $this->service->handleException(
+            new \RuntimeException('PDO: connection refused'),
+            $this->createMock(Component::class),
+            $this->quote
+        );
+
+        $errorMessage = $this->createMock(ErrorMessage::class);
+        $errorMessage->expects($this->once())
+            ->method('withMessage')
+            ->with($this->logicalAnd(
+                $this->stringContains('Something went wrong'),
+                $this->logicalNot($this->stringContains('PDO'))
+            ));
+
+        $resultFactory = $this->createMock(EvaluationResultFactory::class);
+        $resultFactory->method('createErrorMessage')->willReturn($errorMessage);
+
+        $this->assertSame($errorMessage, $this->service->evaluateCompletion($resultFactory));
+    }
+
+    public function testEvaluateCompletionWithoutFailureUsesDefaultSuccess(): void
+    {
+        $success = $this->createMock(Success::class);
+
+        $resultFactory = $this->createMock(EvaluationResultFactory::class);
+        $resultFactory->expects($this->once())->method('createSuccess')->willReturn($success);
+        $resultFactory->expects($this->never())->method('createErrorMessage');
+
+        $this->assertSame($success, $this->service->evaluateCompletion($resultFactory, 42));
+        $this->assertTrue($this->service->canRedirect());
     }
 }
