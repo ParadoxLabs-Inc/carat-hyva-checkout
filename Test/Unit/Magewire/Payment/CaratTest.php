@@ -123,6 +123,18 @@ class CaratTest extends TestCase
         $this->assertSame([], $this->component->storedCards);
     }
 
+    public function testBootSwallowsRepositoryErrorForDeletedCard(): void
+    {
+        $this->payment->method('getData')->with('tokenbase_id')->willReturn('5');
+
+        $this->cardRepository->method('getById')
+            ->willThrowException(new \Magento\Framework\Exception\NoSuchEntityException(__('No such card')));
+
+        $this->component->boot();
+
+        $this->assertSame([], $this->component->storedCards);
+    }
+
     public function testBootWithNoAssignedCardNeverQueriesRepository(): void
     {
         $this->payment->method('getData')->with('tokenbase_id')->willReturn(null);

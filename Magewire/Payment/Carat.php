@@ -30,7 +30,6 @@ use Hyva\Checkout\Model\Magewire\Component\EvaluationResultInterface;
 use Magento\Checkout\Model\Session as CheckoutSession;
 use Magento\Framework\Exception\LocalizedException;
 use Magento\Framework\Exception\NoSuchEntityException;
-use Magento\Payment\Model\MethodInterface;
 use Magento\Quote\Api\Data\CartInterface;
 use Magewirephp\Magewire\Component\Form;
 use ParadoxLabs\CaratHyvaCheckout\ViewModel\PaymentForm;
@@ -39,6 +38,7 @@ use ParadoxLabs\TokenBase\Api\Data\CardInterface;
 use ParadoxLabs\TokenBase\Block\Form\Cc;
 use ParadoxLabs\TokenBase\Model\Card;
 use Rakit\Validation\Validator;
+use Throwable;
 
 /**
  * Magewire component for the Carat (Fiserv Commerce Hub) hosted payment fields form.
@@ -101,13 +101,21 @@ class Carat extends Form implements EvaluationInterface
     {
         $payment = $this->getQuote()->getPayment();
 
-        if ($payment->getData('tokenbase_id') !== null) {
-            $card = $this->cardRepository->getById($payment->getData('tokenbase_id'));
+        if ($payment->getData('tokenbase_id') === null) {
+            return;
+        }
 
-            if ($card->getMethod() === static::METHOD_CODE
-                && (int)$card->getCustomerId() === (int)$this->getQuote()->getCustomerId()) {
-                $this->addStoredCardToList($card);
-            }
+        try {
+            $card = $this->cardRepository->getById($payment->getData('tokenbase_id'));
+        } catch (Throwable) {
+            // The assigned card no longer exists (deleted since assignment); fall back to
+            // new-card entry rather than failing every Magewire request for the component.
+            return;
+        }
+
+        if ($card->getMethod() === static::METHOD_CODE
+            && (int)$card->getCustomerId() === (int)$this->getQuote()->getCustomerId()) {
+            $this->addStoredCardToList($card);
         }
     }
 
@@ -128,23 +136,15 @@ class Carat extends Form implements EvaluationInterface
     public function evaluateCompletion(EvaluationResultFactory $resultFactory): EvaluationResultInterface
     {
         $validationError = $resultFactory->createErrorMessage();
-        $validationError->withMessage('There\'s an issue with your payment details. Please check the payment form.');
+        $validationError->withMessage(
+            (string)__('There\'s an issue with your payment details. Please check the payment form.')
+        );
         $validationError->withVisibilityDuration(5000);
 
         $validation = $resultFactory->createValidation('validate' . static::METHOD_CODE);
         $validation->withFailureResult($validationError);
 
         return $validation;
-    }
-
-    /**
-     * Get the active payment method instance
-     *
-     * @throws LocalizedException
-     */
-    protected function getMethod(): MethodInterface
-    {
-        return $this->formViewModel->getMethod(static::METHOD_CODE);
     }
 
     /**

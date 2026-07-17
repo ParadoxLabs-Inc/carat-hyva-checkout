@@ -52,10 +52,10 @@ class PlaceOrderService extends AbstractPlaceOrderService
      * into tokenbase_id.
      *
      * No re-staging is needed for the second importData() that QuoteManagement::placeOrder() runs
-     * against the same payment instance: Carat's assign observer falls back to the already-stored
-     * additional_information.carat_session_id when the incoming data carries no session_id, and
-     * TokenBase reloads the card from the already-assigned tokenbase_id when card_id is absent —
-     * neither value is cleared by the re-import.
+     * against the same payment instance: Carat's assign observer treats a bare re-import (no
+     * card_id or session_id in the data) as a no-op — a stored-card assign clears
+     * carat_session_id at first import, a session assign stores it, and the re-import disturbs
+     * neither the stored session nor an assigned tokenbase_id.
      *
      * @throws CouldNotSaveException
      * @throws \Magento\Framework\Exception\LocalizedException
