@@ -1,0 +1,181 @@
+<?php declare(strict_types=1);
+
+/**
+ * Copyright © 2023-present ParadoxLabs, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Need help? Try our knowledgebase and support system:
+ *
+ * @link https://support.paradoxlabs.com
+ */
+
+use Hyva\Theme\Model\ViewModelRegistry;
+use Magento\Framework\Escaper;
+use ParadoxLabs\CaratHyvaCheckout\Block\CheckoutTemplate;
+use ParadoxLabs\CaratHyvaCheckout\Magewire\Payment\Carat;
+use ParadoxLabs\CaratHyvaCheckout\ViewModel\PaymentForm;
+
+/** @var CheckoutTemplate $block */
+/** @var Carat $magewire */
+/** @var Escaper $escaper */
+/** @var ViewModelRegistry $viewModels */
+/** @var PaymentForm $formViewModel */
+
+$code = $escaper->escapeHtmlAttr($block->getMethodCode());
+$formViewModel = $viewModels->require(PaymentForm::class);
+$formBlock = $formViewModel->getFormBlock($code);
+$method = $formBlock->getMethod();
+$config = $block->getConfig();
+$image = $config['logoImage'] ?? false;
+
+// Method active but unavailable (e.g. currency restriction): config is empty; render nothing.
+if (empty($config['secureUrl'])) {
+    return;
+}
+?>
+<div class="<?= /* @noEscape */ $code ?>"
+     x-data="<?= /* @noEscape */ $code ?>PaymentForm"
+     x-init="initForm"
+     data-config="<?= $escaper->escapeHtmlAttr(json_encode($config)) ?>"
+>
+    <?php if ($image): ?>
+        <div class="flex justify-end mb-2">
+            <img src="<?= $escaper->escapeHtmlAttr($image); ?>"
+                 alt="<?= $escaper->escapeHtmlAttr(__('Processed by Fiserv')) ?>"
+                 width="152"
+                 height="30"
+            />
+        </div>
+    <?php endif; ?>
+
+    <div class="field required mb-2" x-show="showStoredCards" x-cloak>
+        <label for="<?= /* @noEscape */ $code ?>-card-id" class="label text-gray-700 text-sm">
+            <?= $escaper->escapeHtml(__('Payment Information')) ?>
+        </label>
+        <select id="<?= /* @noEscape */ $code ?>-card-id"
+                class="block w-full shadow-sm border-gray-300 rounded-md"
+                x-model="selectedCard"
+        >
+            <template x-for="storedCard in storedCards" :key="storedCard.hash">
+                <option :value="storedCard.hash"
+                        :data-type="storedCard.type"
+                        x-text="storedCard.label">
+                </option>
+            </template>
+            <option value=""><?= $escaper->escapeHtml(__('Add new card')) ?></option>
+        </select>
+    </div>
+
+    <!--
+        Commerce Hub Checkout SDK hosted-field containers. wire:ignore so Magewire DOM morphs
+        never wipe the mounted field iframes; lifecycle management happens in scripts.phtml.
+    -->
+    <div class="carat-hosted-fields grid gap-4"
+         x-show="showForm"
+         wire:ignore
+    >
+        <div class="field required">
+            <label for="<?= /* @noEscape */ $code ?>-cc-number" class="label text-gray-700 text-sm">
+                <?= $escaper->escapeHtml(__('Credit Card Number')) ?>
+            </label>
+            <div class="carat-hosted-field block w-full h-10 px-2 py-2 border border-gray-300 rounded-md shadow-sm bg-white"
+                 id="<?= /* @noEscape */ $code ?>-cc-number"></div>
+            <span class="text-red-600 text-sm" x-show="getCcNumError" x-text="getCcNumError" x-cloak></span>
+        </div>
+        <div class="field required">
+            <label for="<?= /* @noEscape */ $code ?>-cc-name" class="label text-gray-700 text-sm">
+                <?= $escaper->escapeHtml(__('Name on Card')) ?>
+            </label>
+            <div class="carat-hosted-field block w-full h-10 px-2 py-2 border border-gray-300 rounded-md shadow-sm bg-white"
+                 id="<?= /* @noEscape */ $code ?>-cc-name"></div>
+            <span class="text-red-600 text-sm" x-show="getCcNameError" x-text="getCcNameError" x-cloak></span>
+        </div>
+        <div class="field required">
+            <label for="<?= /* @noEscape */ $code ?>-cc-exp-month" class="label text-gray-700 text-sm">
+                <?= $escaper->escapeHtml(__('Expiration')) ?>
+            </label>
+            <div class="grid grid-cols-2 gap-4">
+                <div class="carat-hosted-field block w-full h-10 px-2 py-2 border border-gray-300 rounded-md shadow-sm bg-white"
+                     id="<?= /* @noEscape */ $code ?>-cc-exp-month"></div>
+                <div class="carat-hosted-field block w-full h-10 px-2 py-2 border border-gray-300 rounded-md shadow-sm bg-white"
+                     id="<?= /* @noEscape */ $code ?>-cc-exp-year"></div>
+            </div>
+            <span class="text-red-600 text-sm" x-show="getCcExpError" x-text="getCcExpError" x-cloak></span>
+        </div>
+        <div class="field required">
+            <label for="<?= /* @noEscape */ $code ?>-cc-cid" class="label text-gray-700 text-sm">
+                <?= $escaper->escapeHtml(__('Security Code')) ?>
+            </label>
+            <div class="carat-hosted-field block w-24 h-10 px-2 py-2 border border-gray-300 rounded-md shadow-sm bg-white"
+                 id="<?= /* @noEscape */ $code ?>-cc-cid"></div>
+            <span class="text-red-600 text-sm" x-show="getCcCidError" x-text="getCcCidError" x-cloak></span>
+        </div>
+    </div>
+
+    <?php if ($formBlock->hasVerification() && $method->getConfigData('require_ccv')): ?>
+        <div class="field required mt-2" x-show="showStoredCvv" x-cloak>
+            <label for="<?= /* @noEscape */ $code ?>-cc-stored-cid" class="label text-gray-700 text-sm">
+                <?= $escaper->escapeHtml(__('Card Verification Number')) ?>
+            </label>
+            <input type="text"
+                   inputmode="numeric"
+                   title="<?= $escaper->escapeHtmlAttr(__('Card Verification Number')) ?>"
+                   class="block w-16 shadow-sm border-gray-300 rounded-md text-center"
+                   id="<?= /* @noEscape */ $code ?>-cc-stored-cid"
+                   name="payment[cc_cid]"
+                   x-model="ccCid"
+                   value=""
+                   autocomplete="cc-csc"
+                   :placeholder="getCcCidPlaceholder"
+                   spellcheck="false"
+                   :minlength="getCcCidLength"
+                   :maxlength="getCcCidLength"
+            />
+        </div>
+    <?php endif; ?>
+
+    <span class="text-red-600"
+          id="payment-error-general"
+          x-show="getErrorMessage"
+          x-text="getErrorMessage"
+          x-cloak
+    ></span>
+
+    <?php if (!$formBlock->isGuestCheckout()): ?>
+        <div x-show="showSaveOption"
+             x-cloak
+             class="flex items-center gap-2 mt-2"
+        >
+            <?php if ((bool)$method->getConfigData('allow_unsaved')): ?>
+                <input type="checkbox"
+                       title="<?= $escaper->escapeHtmlAttr(__('Save for next time')) ?>"
+                       class="cursor-pointer"
+                       id="<?= /* @noEscape */ $code ?>-save"
+                       name="payment[save]"
+                       x-model="save"
+                />
+                <label for="<?= /* @noEscape */ $code ?>-save"
+                       class="label text-gray-700 text-sm cursor-pointer">
+                    <?= $escaper->escapeHtml(__('Save for next time')) ?>
+                </label>
+            <?php else: ?>
+                <p class="text-secondary mt-4 text-sm"><?= $escaper->escapeHtml(
+                    __('For your convenience, this data will be stored securely by our payment processor.')
+                ) ?></p>
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
+
+    <?= /* @noEscape */ $block->getChildHtml(); ?>
+</div>

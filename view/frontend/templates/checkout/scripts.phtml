@@ -1,0 +1,427 @@
+<?php declare(strict_types=1);
+
+/**
+ * Copyright © 2023-present ParadoxLabs, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Need help? Try our knowledgebase and support system:
+ *
+ * @link https://support.paradoxlabs.com
+ */
+
+use Magento\Framework\Escaper;
+use ParadoxLabs\CaratHyvaCheckout\Block\CheckoutTemplate;
+
+/** @var CheckoutTemplate $block */
+/** @var Escaper $escaper */
+/** @var Hyva\Theme\ViewModel\HyvaCsp $hyvaCsp */
+
+$code = $escaper->escapeJs($block->getMethodCode());
+
+$tCardNumber   = $escaper->escapeJs(__('Card Number'));
+$tNameOnCard   = $escaper->escapeJs(__('Name on Card'));
+$tExpMonth     = $escaper->escapeJs(__('Expiration Month'));
+$tExpYear      = $escaper->escapeJs(__('Expiration Year'));
+$tCvv          = $escaper->escapeJs(__('CVV'));
+$tBadNumber    = $escaper->escapeJs(__('Please enter a valid card number.'));
+$tBadName      = $escaper->escapeJs(__('Please enter the name on the card.'));
+$tBadExp       = $escaper->escapeJs(__('Please enter a valid expiration date.'));
+$tBadCvv       = $escaper->escapeJs(__('Please enter a valid security code.'));
+$tLoadFailed   = $escaper->escapeJs(__('The payment form failed to load. Please reload and try again.'));
+$tCompleteForm = $escaper->escapeJs(__('Please complete the payment form.'));
+$tCardFailed   = $escaper->escapeJs(__('Unable to verify the card. Please check the card details and try again.'));
+
+$inlineScript = <<<JS
+    'use strict';
+
+    window.addEventListener('checkout:init:validation', event => {
+        hyvaCheckout.evaluation.registerValidator(
+            'validate{$code}',
+            async (element, component) => {
+                return new Promise((resolve, reject) => {
+                    window.dispatchEvent(
+                        new CustomEvent('checkout:validate:{$code}', {detail: {resolve, reject}})
+                    );
+                });
+            }
+        );
+    });
+
+    function {$code}PaymentForm() {
+        // -----------------------------------------------------------------------------------------
+        // additional_data contract (submitPayload()):
+        //   New card    => session_id = <Commerce Hub payment session id>, card_id = ''.
+        //   Stored card => card_id = <vault hash> (+ cc_cid when Require CCV is on).
+        // The session is tokenized in the validate stage, so place-order receives a finished
+        // session id; the charge amount is applied server-side at sale (sessions are not
+        // amount-bound, so no total-drift handling is needed).
+        // -----------------------------------------------------------------------------------------
+        return {
+            storedCards: this.\$wire.entangle('storedCards'),
+            selectedCard: '',
+            sessionId: '',
+            save: true,
+            ccCid: '',
+            hostedForm: null,
+            formValid: false,
+            tokenizing: false,
+            componentInitialized: false,
+            config: {},
+            state: {
+                cc_cid_length: 3,
+                cc_type: ''
+            },
+            fieldError: {
+                number: '',
+                name: '',
+                exp: '',
+                cid: ''
+            },
+            error: {
+                general: ''
+            },
+            promise: {
+                resolve: null,
+                reject: null
+            },
+            initForm: function() {
+                if (this.componentInitialized) {
+                    return;
+                }
+
+                this.config = JSON.parse(this.\$el.dataset.config);
+                this.selectedCard = this.config.selectedCard || '';
+                this.save = this.config.canSaveCard
+                            && (this.config.forceSaveCard || this.config.defaultSaveCard);
+
+                // Store bound refs globally and remove-before-add: if Magewire replaces the root
+                // node, a fresh Alpine instance initializes and a stale listener set would double
+                // (and double-settle) the shared validation promise.
+                const listeners = window['{$code}Listeners'] = window['{$code}Listeners'] || {};
+
+                window.removeEventListener('checkout:validate:{$code}', listeners.validate);
+                listeners.validate = this.validateAndTokenize.bind(this);
+                window.addEventListener('checkout:validate:{$code}', listeners.validate);
+
+                // Dispatched by the Hyva place-order service processor on any placement failure;
+                // a charged-and-declined payment session is spent and must never be resubmitted.
+                window.removeEventListener('order:place:{$code}:error', listeners.orderError);
+                listeners.orderError = this.handleOrderError.bind(this);
+                window.addEventListener('order:place:{$code}:error', listeners.orderError);
+
+                // Hyva dispatches this on window (init-payment.phtml). Re-mount the hosted fields
+                // if a Magewire morph or method switch wiped the iframes.
+                window.removeEventListener('checkout:payment:method-activate', listeners.methodActivate);
+                listeners.methodActivate = this.handleMethodActivate.bind(this);
+                window.addEventListener('checkout:payment:method-activate', listeners.methodActivate);
+
+                this.\$watch('selectedCard', this.changeSelectedCard.bind(this));
+                this.updateStoredCardState();
+                this.mountHostedFields();
+
+                this.componentInitialized = true;
+            },
+            /**
+             * Load the Checkout client SDK once per page. The script registers a window.fiserv
+             * global; the shared window-scoped promise dedupes across Alpine re-initializations.
+             */
+            loadSdk: function() {
+                if (!window['{$code}SdkPromise']) {
+                    window['{$code}SdkPromise'] = new Promise((resolve, reject) => {
+                        if (window.fiserv && window.fiserv.components) {
+                            resolve(window.fiserv);
+                            return;
+                        }
+
+                        const script = document.createElement('script');
+                        script.src = this.config.secureUrl;
+                        script.type = 'text/javascript';
+                        script.addEventListener('load', () => {
+                            if (window.fiserv && window.fiserv.components) {
+                                resolve(window.fiserv);
+                            } else {
+                                reject(new Error('Carat checkout SDK failed to load.'));
+                            }
+                        });
+                        script.addEventListener('error', () => {
+                            // Allow a later mount attempt to retry the load.
+                            window['{$code}SdkPromise'] = null;
+                            reject(new Error('Carat checkout SDK failed to load.'));
+                        });
+                        document.head.append(script);
+                    });
+                }
+
+                return window['{$code}SdkPromise'];
+            },
+            isFormMounted: function() {
+                const container = document.getElementById('{$code}-cc-number');
+
+                return !!container && container.children.length > 0;
+            },
+            /**
+             * Create the hosted payment fields in the field containers. Credentials are not needed
+             * until the form is submitted, so no server call happens here.
+             */
+            mountHostedFields: function() {
+                if (this.selectedCard || this.isFormMounted()) {
+                    return;
+                }
+
+                this.destroyHostedForm();
+
+                this.loadSdk()
+                    .then(fiserv => fiserv.components.paymentFields({
+                        data: {
+                            environment: this.config.environment,
+                            fields: this.getFieldsConfig()
+                        },
+                        hooks: {
+                            onFormValid: this.setFormValid.bind(this, true),
+                            onFormNoLongerValid: this.setFormValid.bind(this, false),
+                            onFieldValidityChange: this.handleFieldValidityChange.bind(this)
+                        }
+                    }))
+                    .then(form => {
+                        this.hostedForm = form;
+                    })
+                    .catch(error => {
+                        console.error(error);
+                        this.error.general = '{$tLoadFailed}';
+                    });
+            },
+            getFieldsConfig: function() {
+                return {
+                    cardNumber: {
+                        parentElementId: '{$code}-cc-number',
+                        placeholder: '{$tCardNumber}',
+                        dynamicPlaceholderCharacter: '•',
+                        enableFormatting: true,
+                        masking: {
+                            character: '•',
+                            mode: 'ALWAYS_MASK_EXCEPT_LAST_4',
+                            shrunkLength: 4
+                        }
+                    },
+                    nameOnCard: {
+                        parentElementId: '{$code}-cc-name',
+                        placeholder: '{$tNameOnCard}'
+                    },
+                    expirationMonth: {
+                        parentElementId: '{$code}-cc-exp-month',
+                        placeholder: '{$tExpMonth}'
+                    },
+                    expirationYear: {
+                        parentElementId: '{$code}-cc-exp-year',
+                        placeholder: '{$tExpYear}'
+                    },
+                    securityCode: {
+                        parentElementId: '{$code}-cc-cid',
+                        placeholder: '{$tCvv}',
+                        masking: {
+                            character: '•',
+                            mode: 'ALWAYS_MASK_ALL'
+                        }
+                    }
+                };
+            },
+            destroyHostedForm: function() {
+                if (this.hostedForm && typeof this.hostedForm.destroy === 'function') {
+                    try {
+                        this.hostedForm.destroy();
+                    } catch (error) {
+                        // Ignore errors tearing down an already-removed form
+                    }
+                }
+
+                this.hostedForm = null;
+                this.formValid = false;
+                this.sessionId = '';
+            },
+            setFormValid: function(valid) {
+                this.formValid = valid;
+            },
+            handleFieldValidityChange: function(data) {
+                const error = data.isValid === false && data.shouldShowError === true;
+
+                switch (data.field) {
+                    case 'cardNumber':
+                        this.fieldError.number = error ? '{$tBadNumber}' : '';
+                        break;
+                    case 'nameOnCard':
+                        this.fieldError.name = error ? '{$tBadName}' : '';
+                        break;
+                    case 'expirationMonth':
+                    case 'expirationYear':
+                        this.fieldError.exp = error ? '{$tBadExp}' : '';
+                        break;
+                    case 'securityCode':
+                        this.fieldError.cid = error ? '{$tBadCvv}' : '';
+                        break;
+                }
+
+                // Any change to the card data invalidates a previously tokenized session
+                this.sessionId = '';
+            },
+            handleMethodActivate: function(event) {
+                if (event && event.detail && event.detail.method === '{$code}') {
+                    // Defer a tick so the payment form is in the DOM before the mount check runs.
+                    window.setTimeout(this.mountHostedFields.bind(this), 0);
+                }
+            },
+            /**
+             * Hyva evaluation validator: settle payment data before place-order. A stored card
+             * passes through directly; a new card is tokenized into a Commerce Hub payment
+             * session here, so the server receives a finished session id.
+             */
+            validateAndTokenize: function(event) {
+                this.promise.resolve = event.detail.resolve;
+                this.promise.reject  = event.detail.reject;
+                this.error.general   = '';
+
+                if (this.selectedCard) {
+                    if (this.config.requireCcv
+                        && this.ccCid.length !== this.state.cc_cid_length) {
+                        this.failValidation('{$tBadCvv}');
+                        return;
+                    }
+
+                    this.submitPayload();
+                    return;
+                }
+
+                // An already-tokenized, unchanged session goes straight to the server.
+                if (this.sessionId) {
+                    this.submitPayload();
+                    return;
+                }
+
+                if (!this.hostedForm || !this.formValid) {
+                    this.failValidation('{$tCompleteForm}');
+                    return;
+                }
+
+                this.tokenizing = true;
+
+                // Mint one-time credentials + session server-side (also persists the session id
+                // onto the quote payment), then tokenize the entered card data into the session.
+                fetch(this.config.paramUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: new URLSearchParams({
+                        form_key: hyva.getFormKey(),
+                        source: 'checkout'
+                    })
+                })
+                    .then(response => response.json().then(params => {
+                        if (!response.ok) {
+                            throw new Error(params && params.message ? params.message : '{$tCardFailed}');
+                        }
+
+                        return params;
+                    }))
+                    .then(params => this.hostedForm.submit({
+                        apiKey: params.apiKey,
+                        accessToken: params.credentials.accessToken,
+                        createToken: false,
+                        publicKey: params.credentials.publicKey,
+                        keyId: params.credentials.keyId,
+                        merchantId: params.merchantId,
+                        terminalId: params.terminalId
+                    }).then(() => params.sessionId))
+                    .then(sessionId => {
+                        this.tokenizing = false;
+                        this.sessionId = sessionId;
+                        this.submitPayload();
+                    })
+                    .catch(error => {
+                        console.error(error);
+                        this.failValidation(
+                            error && error.message && typeof error.message === 'string'
+                                ? error.message
+                                : '{$tCardFailed}'
+                        );
+                    });
+            },
+            submitPayload: function() {
+                const payload = {
+                    method: '{$code}',
+                    save: this.save ? 1 : 0
+                };
+
+                if (this.selectedCard) {
+                    payload.card_id = this.selectedCard;
+                    payload.cc_cid = this.ccCid || '';
+                } else {
+                    payload.session_id = this.sessionId;
+                }
+
+                hyvaCheckout.storage.setValue('payment', payload);
+
+                this.promise.resolve(true);
+            },
+            failValidation: function(message) {
+                this.tokenizing = false;
+                this.error.general = message;
+
+                if (this.promise.reject) {
+                    this.promise.reject(message);
+                }
+            },
+            handleOrderError: function(event) {
+                // A payment session cannot be reused after a failed charge; require re-entry.
+                this.sessionId = '';
+
+                if (this.hostedForm && typeof this.hostedForm.reset === 'function') {
+                    this.hostedForm.reset();
+                }
+            },
+            changeSelectedCard: function() {
+                this.updateStoredCardState();
+                this.error.general = '';
+
+                if (!this.selectedCard) {
+                    // Defer a tick so x-show reveals the containers before the mount check runs.
+                    window.setTimeout(this.mountHostedFields.bind(this), 0);
+                }
+            },
+            updateStoredCardState: function() {
+                if (this.selectedCard) {
+                    this.state.cc_type = this.storedCards[this.selectedCard]?.type || '';
+                    this.state.cc_cid_length = this.state.cc_type === 'AE' ? 4 : 3;
+                }
+            },
+            /* Getters for template bindings */
+            getCcNumError() {return this.fieldError.number},
+            getCcNameError() {return this.fieldError.name},
+            getCcExpError() {return this.fieldError.exp},
+            getCcCidError() {return this.fieldError.cid},
+            getCcCidLength() {return this.state.cc_cid_length},
+            getCcCidPlaceholder() {return this.state.cc_cid_length === 4 ? '0000' : '000'},
+            getErrorMessage() {return this.error.general},
+            showForm() {return !this.selectedCard},
+            showStoredCvv() {return !!this.selectedCard && !!this.config.requireCcv},
+            showSaveOption() {return !this.selectedCard && this.config.canSaveCard},
+            showStoredCards() {return Object.keys(this.storedCards).length > 0}
+        }
+    }
+
+    window.addEventListener('alpine:init', () => Alpine.data('{$code}PaymentForm', {$code}PaymentForm), {once: true});
+JS;
+?>
+<script><?= /* @noEscape */ $inlineScript ?></script>
+<?php $hyvaCsp->registerInlineScript() ?>
