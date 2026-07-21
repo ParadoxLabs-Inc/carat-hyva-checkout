@@ -6,6 +6,14 @@
         </arguments>
     </type>
 
+    <type name="ParadoxLabs\TokenBaseHyvaCheckout\ViewModel\SupportedMethods">
+        <arguments>
+            <argument name="methods" xsi:type="array">
+                <item name="paradoxlabs_carat" xsi:type="string">paradoxlabs_carat</item>
+            </argument>
+        </arguments>
+    </type>
+
     <type name="Hyva\Checkout\Model\Magewire\Payment\PlaceOrderServiceProvider">
         <arguments>
             <argument name="placeOrderServiceList" xsi:type="array">

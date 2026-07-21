@@ -17,6 +17,7 @@ Requirements
 * `hyva-themes/magento2-theme-module` >= 1.3.11
 * `hyva-themes/magento2-payment-icons` >= 2.0
 * `paradoxlabs/carat` ^2.1 (Commerce Hub Checkout SDK / SDCv2 integration)
+* `paradoxlabs/tokenbase-hyva-checkout` ^1.0 (shared Hyva payment-options scaffold)
 
 Features
 ========
@@ -28,6 +29,9 @@ Features
   validation stage; the server charges or stores the session by ID (source type PaymentSession)
 * Supports stored cards (vault) via ParadoxLabs_TokenBase, including CVV re-entry on stored cards
   when Require CCV is enabled
+* Customer-account "My Payment Options" (paymentinfo) card management on Hyva themes: card list,
+  delete, and add/edit via the shared `ParadoxLabs_TokenBaseHyvaCheckout` two-step (address then
+  hosted-fields) scaffold
 * Strict CSP and Alpine CSP compliant, for Hyva Checkout 1.3+ nonce-based CSP
 
 Architecture
@@ -53,6 +57,16 @@ Architecture
   Magewire request completes normally (delivering the queued `order:place:*:error` browser
   events), `evaluateCompletion()` surfaces the real decline message through the messenger, and
   `canRedirect()` blocks the success-page redirect for the failed attempt.
+* Customer-account payment options (paymentinfo) reuse the shared `ParadoxLabs_TokenBaseHyvaCheckout`
+  scaffold: the `hyva_customer_paymentinfo_index_paradoxlabs_carat` layout retemplates the Luma
+  method/cards/form blocks onto the shared Hyva templates and attaches
+  `Block\Customer\PaymentPane` as the `payment_pane` child. The pane mounts the hosted fields when
+  the scaffold dispatches `paradoxlabs_caratPaymentinfoAddressConfirmed`, tears them down on
+  `...AddressEdit`, and on Save tokenizes the entered card into a Commerce Hub payment session via
+  `pdl_carat/secure/getParams` (source=paymentinfo, so no quote session is touched), stashing the
+  session id into `payment[session_id]` and submitting to the TokenBase Save controller. The
+  Save controller loads the card by its hash (`id`), so edit re-tokenizes and updates the existing
+  card in place rather than duplicating.
 
 Installation and Usage
 ======================
@@ -86,10 +100,16 @@ Pre-release Caveats / TODO
       signal that does fire
     * Placement failure path: session cleared, form reset, retry succeeds
     * Method switch away/back and billing-step round trips (hosted-field re-mount)
-* **No customer-account payment options (paymentinfo) support.** The TokenBase "My Payment
-  Options" page is Luma-only for Carat; this module removes its nav link on Hyva themes
-  (`view/frontend/layout/hyva_customer_account.xml`). Implementing Hyva paymentinfo support is a
-  future task.
+    * Customer-account "My Payment Options" (paymentinfo) on a Hyva theme:
+        * Nav link present (only when every installed TokenBase gateway Hyva module has migrated)
+        * Method tabs across 2+ active TokenBase methods; unsupported-method notice pane
+        * Card list renders with expiry badge; delete-confirm modal deletes the card
+        * Add card happy path: address step -> Confirm Address -> hosted fields mount -> enter
+          card -> Save -> tokenize -> redirect with success message
+        * Edit card: address prefilled, re-enter card, Save re-tokenizes and updates the existing
+          card in place (no duplicate); verify the card's last4/expiry actually change
+        * Region switcher (select vs. free-text) for US/CA/intl countries; optional-zip countries
+        * SDK/tokenize failure path: error message shown, form stays usable for retry
 * **Repository push pending.** The `m2-carat-hyva-checkout` remote repository does not exist yet.
 
 License

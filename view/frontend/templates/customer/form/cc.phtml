@@ -1,0 +1,422 @@
+<?php declare(strict_types=1);
+
+/**
+ * Copyright © 2023-present ParadoxLabs, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Need help? Try our knowledgebase and support system:
+ *
+ * @link https://support.paradoxlabs.com
+ */
+
+use Magento\Framework\Escaper;
+use ParadoxLabs\Carat\Model\Config\Config;
+use ParadoxLabs\CaratHyvaCheckout\Block\Customer\PaymentPane;
+
+/**
+ * Commerce Hub Checkout SDK payment pane for the Hyva customer payment-options add/edit form.
+ *
+ * Rendered as the 'payment_pane' child of the shared TokenBaseHyvaCheckout form scaffold. It mounts
+ * the hosted payment fields when the scaffold announces the address step is confirmed, tears them
+ * down on an address edit, and on Save tokenizes the entered card into a Commerce Hub payment
+ * session — stashing the session id into payment[session_id] and submitting to the TokenBase Save
+ * controller, which exchanges it server-side (Card::beforeSave -> tokenizeCard).
+ *
+ * @var PaymentPane $block
+ * @var Escaper $escaper
+ * @var Hyva\Theme\ViewModel\HyvaCsp $hyvaCsp
+ */
+
+$code = $escaper->escapeHtmlAttr(Config::CODE);
+$paneConfig = [
+    'code' => Config::CODE,
+    'paramUrl' => $block->getParamUrl(),
+    'secureUrl' => $block->getSecureUrl(),
+    'environment' => $block->getEnvironment(),
+];
+
+$tCardNumber   = $escaper->escapeJs(__('Card Number'));
+$tNameOnCard   = $escaper->escapeJs(__('Name on Card'));
+$tExpMonth     = $escaper->escapeJs(__('Expiration Month'));
+$tExpYear      = $escaper->escapeJs(__('Expiration Year'));
+$tCvv          = $escaper->escapeJs(__('CVV'));
+$tBadNumber    = $escaper->escapeJs(__('Please enter a valid card number.'));
+$tBadName      = $escaper->escapeJs(__('Please enter the name on the card.'));
+$tBadExp       = $escaper->escapeJs(__('Please enter a valid expiration date.'));
+$tBadCvv       = $escaper->escapeJs(__('Please enter a valid security code.'));
+$tLoadFailed   = $escaper->escapeJs(__('The payment form failed to load. Please reload and try again.'));
+$tCompleteForm = $escaper->escapeJs(__('Please complete the payment form.'));
+$tCardFailed   = $escaper->escapeJs(__('Unable to verify the card. Please check the card details and try again.'));
+?>
+<fieldset class="mb-4"
+          x-data="<?= /* @noEscape */ $code ?>PaymentinfoPane"
+          data-config="<?= $escaper->escapeHtmlAttr(json_encode($paneConfig)) ?>"
+>
+    <legend class="text-lg font-medium mb-2"><?= $escaper->escapeHtml(__('Payment Information')) ?></legend>
+
+    <input type="hidden" name="payment[session_id]" value=""/>
+
+    <div class="carat-hosted-fields grid gap-4">
+        <div class="field required">
+            <label for="<?= /* @noEscape */ $code ?>-cc-number" class="label text-gray-700 text-sm">
+                <?= $escaper->escapeHtml(__('Credit Card Number')) ?>
+            </label>
+            <div class="carat-hosted-field block w-full h-10 px-2 py-2 border border-gray-300 rounded-md shadow-sm bg-white"
+                 id="<?= /* @noEscape */ $code ?>-cc-number"></div>
+            <span class="text-red-600 text-sm" x-show="getCcNumError" x-text="getCcNumError" x-cloak></span>
+        </div>
+        <div class="field required">
+            <label for="<?= /* @noEscape */ $code ?>-cc-name" class="label text-gray-700 text-sm">
+                <?= $escaper->escapeHtml(__('Name on Card')) ?>
+            </label>
+            <div class="carat-hosted-field block w-full h-10 px-2 py-2 border border-gray-300 rounded-md shadow-sm bg-white"
+                 id="<?= /* @noEscape */ $code ?>-cc-name"></div>
+            <span class="text-red-600 text-sm" x-show="getCcNameError" x-text="getCcNameError" x-cloak></span>
+        </div>
+        <div class="field required">
+            <label for="<?= /* @noEscape */ $code ?>-cc-exp-month" class="label text-gray-700 text-sm">
+                <?= $escaper->escapeHtml(__('Expiration')) ?>
+            </label>
+            <div class="grid grid-cols-2 gap-4">
+                <div class="carat-hosted-field block w-full h-10 px-2 py-2 border border-gray-300 rounded-md shadow-sm bg-white"
+                     id="<?= /* @noEscape */ $code ?>-cc-exp-month"></div>
+                <div class="carat-hosted-field block w-full h-10 px-2 py-2 border border-gray-300 rounded-md shadow-sm bg-white"
+                     id="<?= /* @noEscape */ $code ?>-cc-exp-year"></div>
+            </div>
+            <span class="text-red-600 text-sm" x-show="getCcExpError" x-text="getCcExpError" x-cloak></span>
+        </div>
+        <div class="field required">
+            <label for="<?= /* @noEscape */ $code ?>-cc-cid" class="label text-gray-700 text-sm">
+                <?= $escaper->escapeHtml(__('Security Code')) ?>
+            </label>
+            <div class="carat-hosted-field block w-24 h-10 px-2 py-2 border border-gray-300 rounded-md shadow-sm bg-white"
+                 id="<?= /* @noEscape */ $code ?>-cc-cid"></div>
+            <span class="text-red-600 text-sm" x-show="getCcCidError" x-text="getCcCidError" x-cloak></span>
+        </div>
+    </div>
+
+    <span class="text-red-600 block mt-2"
+          x-show="getErrorMessage"
+          x-text="getErrorMessage"
+          x-cloak
+    ></span>
+
+    <div class="mt-4">
+        <button type="button"
+                class="btn btn-primary save"
+                @click="saveCard"
+                :disabled="tokenizing"
+        >
+            <span x-show="!tokenizing"><?= $escaper->escapeHtml(__('Save Card')) ?></span>
+            <span x-show="tokenizing" x-cloak><?= $escaper->escapeHtml(__('Saving...')) ?></span>
+        </button>
+    </div>
+</fieldset>
+
+<script>
+    'use strict';
+
+    (function () {
+        if (window.<?= /* @noEscape */ $code ?>PaymentinfoPaneRegistered) {
+            return;
+        }
+
+        window.<?= /* @noEscape */ $code ?>PaymentinfoPaneRegistered = true;
+
+        window.addEventListener('alpine:init', () => {
+            Alpine.data('<?= /* @noEscape */ $code ?>PaymentinfoPane', () => ({
+                config: {},
+                hostedForm: null,
+                formValid: false,
+                tokenizing: false,
+                fieldError: {number: '', name: '', exp: '', cid: ''},
+                error: {general: ''},
+
+                init() {
+                    this.config = JSON.parse(this.$el.dataset.config);
+
+                    window.addEventListener(
+                        this.config.code + 'PaymentinfoAddressConfirmed',
+                        this.handleAddressConfirmed.bind(this)
+                    );
+                    window.addEventListener(
+                        this.config.code + 'PaymentinfoAddressEdit',
+                        this.handleAddressEdit.bind(this)
+                    );
+                },
+
+                getForm() {
+                    return this.$el.closest('form');
+                },
+
+                /**
+                 * Load the Checkout client SDK once per page. The script registers a window.fiserv
+                 * global; the shared window-scoped promise dedupes across Alpine re-initializations.
+                 */
+                loadSdk() {
+                    if (!window['<?= /* @noEscape */ $code ?>SdkPromise']) {
+                        window['<?= /* @noEscape */ $code ?>SdkPromise'] = new Promise((resolve, reject) => {
+                            if (window.fiserv && window.fiserv.components) {
+                                resolve(window.fiserv);
+
+                                return;
+                            }
+
+                            const script = document.createElement('script');
+                            script.src = this.config.secureUrl;
+                            script.type = 'text/javascript';
+                            script.addEventListener('load', () => {
+                                if (window.fiserv && window.fiserv.components) {
+                                    resolve(window.fiserv);
+                                } else {
+                                    reject(new Error('Carat checkout SDK failed to load.'));
+                                }
+                            });
+                            script.addEventListener('error', () => {
+                                // Allow a later mount attempt to retry the load.
+                                window['<?= /* @noEscape */ $code ?>SdkPromise'] = null;
+                                reject(new Error('Carat checkout SDK failed to load.'));
+                            });
+                            document.head.append(script);
+                        });
+                    }
+
+                    return window['<?= /* @noEscape */ $code ?>SdkPromise'];
+                },
+
+                isFormMounted() {
+                    const container = document.getElementById('<?= /* @noEscape */ $code ?>-cc-number');
+
+                    return !!container && container.children.length > 0;
+                },
+
+                handleAddressConfirmed() {
+                    this.mountHostedFields();
+                },
+
+                handleAddressEdit() {
+                    // Editing the address is unrelated to the card, but tearing down keeps the
+                    // mounted-state guards honest if the fields were wiped from the DOM meanwhile.
+                    this.destroyHostedForm();
+                    this.clearSession();
+                },
+
+                /**
+                 * Create the hosted payment fields in the field containers. Credentials are not
+                 * needed until submit, so no server call happens here. A window-scoped in-flight
+                 * guard keeps concurrent mount requests from double-mounting the same containers.
+                 */
+                mountHostedFields() {
+                    if (this.isFormMounted() || window['<?= /* @noEscape */ $code ?>PaymentinfoMountPromise']) {
+                        return;
+                    }
+
+                    this.destroyHostedForm();
+
+                    window['<?= /* @noEscape */ $code ?>PaymentinfoMountPromise'] = this.loadSdk()
+                        .then(fiserv => fiserv.components.paymentFields({
+                            data: {
+                                environment: this.config.environment,
+                                fields: this.getFieldsConfig()
+                            },
+                            hooks: {
+                                onFormValid: this.setFormValid.bind(this, true),
+                                onFormNoLongerValid: this.setFormValid.bind(this, false),
+                                onFieldValidityChange: this.handleFieldValidityChange.bind(this)
+                            }
+                        }))
+                        .then(form => {
+                            window['<?= /* @noEscape */ $code ?>PaymentinfoMountPromise'] = null;
+                            this.hostedForm = form;
+                        })
+                        .catch(error => {
+                            window['<?= /* @noEscape */ $code ?>PaymentinfoMountPromise'] = null;
+                            console.error(error);
+                            this.error.general = '<?= /* @noEscape */ $tLoadFailed ?>';
+                        });
+                },
+
+                getFieldsConfig() {
+                    return {
+                        cardNumber: {
+                            parentElementId: '<?= /* @noEscape */ $code ?>-cc-number',
+                            placeholder: '<?= /* @noEscape */ $tCardNumber ?>',
+                            dynamicPlaceholderCharacter: '•',
+                            enableFormatting: true,
+                            masking: {
+                                character: '•',
+                                mode: 'ALWAYS_MASK_EXCEPT_LAST_4',
+                                shrunkLength: 4
+                            }
+                        },
+                        nameOnCard: {
+                            parentElementId: '<?= /* @noEscape */ $code ?>-cc-name',
+                            placeholder: '<?= /* @noEscape */ $tNameOnCard ?>'
+                        },
+                        expirationMonth: {
+                            parentElementId: '<?= /* @noEscape */ $code ?>-cc-exp-month',
+                            placeholder: '<?= /* @noEscape */ $tExpMonth ?>'
+                        },
+                        expirationYear: {
+                            parentElementId: '<?= /* @noEscape */ $code ?>-cc-exp-year',
+                            placeholder: '<?= /* @noEscape */ $tExpYear ?>'
+                        },
+                        securityCode: {
+                            parentElementId: '<?= /* @noEscape */ $code ?>-cc-cid',
+                            placeholder: '<?= /* @noEscape */ $tCvv ?>',
+                            masking: {
+                                character: '•',
+                                mode: 'ALWAYS_MASK_ALL'
+                            }
+                        }
+                    };
+                },
+
+                destroyHostedForm() {
+                    if (this.hostedForm && typeof this.hostedForm.destroy === 'function') {
+                        try {
+                            this.hostedForm.destroy();
+                        } catch (error) {
+                            // Ignore errors tearing down an already-removed form
+                        }
+                    }
+
+                    this.hostedForm = null;
+                    this.formValid = false;
+                },
+
+                setFormValid(valid) {
+                    this.formValid = valid;
+                },
+
+                handleFieldValidityChange(data) {
+                    const invalid = data.isValid === false && data.shouldShowError === true;
+
+                    switch (data.field) {
+                        case 'cardNumber':
+                            this.fieldError.number = invalid ? '<?= /* @noEscape */ $tBadNumber ?>' : '';
+                            break;
+                        case 'nameOnCard':
+                            this.fieldError.name = invalid ? '<?= /* @noEscape */ $tBadName ?>' : '';
+                            break;
+                        case 'expirationMonth':
+                        case 'expirationYear':
+                            this.fieldError.exp = invalid ? '<?= /* @noEscape */ $tBadExp ?>' : '';
+                            break;
+                        case 'securityCode':
+                            this.fieldError.cid = invalid ? '<?= /* @noEscape */ $tBadCvv ?>' : '';
+                            break;
+                    }
+
+                    // Any change to the card data invalidates a previously tokenized session.
+                    this.clearSession();
+                },
+
+                clearSession() {
+                    const form = this.getForm();
+                    const input = form ? form.querySelector('[name="payment[session_id]"]') : null;
+
+                    if (input) {
+                        input.value = '';
+                    }
+                },
+
+                /**
+                 * Tokenize the entered card into a Commerce Hub payment session, then submit the
+                 * form. The scaffold's hidden 'id' field carries the card hash on edit (so Save
+                 * re-tokenizes and updates the existing card instead of duplicating) and is empty
+                 * on add.
+                 */
+                saveCard() {
+                    if (this.tokenizing) {
+                        return;
+                    }
+
+                    this.error.general = '';
+
+                    if (!this.hostedForm || !this.formValid) {
+                        this.error.general = '<?= /* @noEscape */ $tCompleteForm ?>';
+
+                        return;
+                    }
+
+                    this.tokenizing = true;
+
+                    const form = this.getForm();
+
+                    // Serialize the whole form (billing fields + form_key + method + source), same
+                    // contract as the Luma widget; getParams builds the credential in that context
+                    // (source=paymentinfo, so no quote session is touched).
+                    const body = new URLSearchParams(new FormData(form));
+
+                    fetch(this.config.paramUrl, {
+                        method: 'POST',
+                        headers: {'X-Requested-With': 'XMLHttpRequest'},
+                        body: body
+                    })
+                        .then(response => response.json()
+                            .catch(() => {
+                                // Non-JSON body (WAF block page, HTML 500): never surface the raw
+                                // parser error to the customer.
+                                throw new Error('<?= /* @noEscape */ $tCardFailed ?>');
+                            })
+                            .then(params => {
+                                if (!response.ok) {
+                                    throw new Error(
+                                        params && params.message ? params.message : '<?= /* @noEscape */ $tCardFailed ?>'
+                                    );
+                                }
+
+                                return params;
+                            }))
+                        .then(params => this.hostedForm.submit({
+                            apiKey: params.apiKey,
+                            accessToken: params.credentials.accessToken,
+                            createToken: false,
+                            publicKey: params.credentials.publicKey,
+                            keyId: params.credentials.keyId,
+                            merchantId: params.merchantId,
+                            terminalId: params.terminalId
+                        }).then(() => params.sessionId))
+                        .then(sessionId => {
+                            const input = form.querySelector('[name="payment[session_id]"]');
+
+                            if (input) {
+                                input.value = sessionId;
+                            }
+
+                            form.submit();
+                        })
+                        .catch(error => {
+                            console.error(error);
+                            this.tokenizing = false;
+                            this.error.general = error && typeof error.message === 'string' && error.message
+                                ? error.message
+                                : '<?= /* @noEscape */ $tCardFailed ?>';
+                        });
+                },
+
+                /* Getters for template bindings */
+                getCcNumError() {return this.fieldError.number;},
+                getCcNameError() {return this.fieldError.name;},
+                getCcExpError() {return this.fieldError.exp;},
+                getCcCidError() {return this.fieldError.cid;},
+                getErrorMessage() {return this.error.general;},
+            }));
+        }, {once: true});
+    })();
+</script>
+<?php if (isset($hyvaCsp)): ?>
+    <?php $hyvaCsp->registerInlineScript() ?>
+<?php endif; ?>
