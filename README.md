@@ -16,7 +16,7 @@ Requirements
 * Hyva Checkout (separate product and license), `hyva-themes/magento2-hyva-checkout` >= 1.3
 * `hyva-themes/magento2-theme-module` >= 1.3.11
 * `hyva-themes/magento2-payment-icons` >= 2.0
-* `paradoxlabs/carat` ^2.1 (Commerce Hub Checkout SDK / SDCv2 integration)
+* `paradoxlabs/carat` ^3.0 (Commerce Hub Checkout SDK / SDCv2 integration)
 * `paradoxlabs/tokenbase-hyva-checkout` ^1.0 (shared Hyva payment-options scaffold)
 
 Features
@@ -86,33 +86,20 @@ In SSH at your Magento base directory, run:
 
 These commands will download and apply any available updates to the module.
 
-Pre-release Caveats / TODO
-==========================
+Changelog
+=========
 
-* **No runtime QA yet.** This module has not been exercised against a live Hyva Checkout install or
-  the Commerce Hub CERT sandbox. Unit tests and static analysis pass, but end-to-end tokenization
-  and order placement remain to be verified in a browser. Runtime QA checklist:
-    * New-card tokenization and order placement (guest + logged in, save on/off)
-    * Stored-card placement, with and without Require CCV
-    * Verify the SDK `onFieldValidityChange` hook fires on valid→valid edits (e.g. editing the
-      name-on-card field while the form stays valid) — if it does not, a previously tokenized
-      session could carry pre-edit card data; if so, invalidate the session on a form-change
-      signal that does fire
-    * Placement failure path: session cleared, form reset, retry succeeds
-    * Method switch away/back and billing-step round trips (hosted-field re-mount)
-    * Customer-account "My Payment Options" (paymentinfo) on a Hyva theme:
-        * Nav link present (only when every installed TokenBase gateway Hyva module has migrated)
-        * Method tabs across 2+ active TokenBase methods; unsupported-method notice pane
-        * Card list renders with expiry badge; delete-confirm modal deletes the card
-        * Add card happy path: address step -> Confirm Address -> hosted fields mount -> enter
-          card -> Save -> tokenize -> redirect with success message
-        * Edit card: address prefilled, re-enter card, Save re-tokenizes and updates the existing
-          card in place (no duplicate); verify the card's last4/expiry actually change
-        * Region switcher (select vs. free-text) for US/CA/intl countries; optional-zip countries
-        * SDK/tokenize failure path: error message shown, form stays usable for retry
-* **Repository push pending.** The `m2-carat-hyva-checkout` remote repository does not exist yet.
+Please see [CHANGELOG.md](CHANGELOG.md).
+
+Support
+=======
+
+This module is covered by your ParadoxLabs extension support plan. If you need help, open a ticket at
+[support.paradoxlabs.com](https://support.paradoxlabs.com). To renew support,
+[buy an extension support plan from ParadoxLabs](https://store.paradoxlabs.com/support-renewal.html).
 
 License
 =======
 
-Apache-2.0. See LICENSE.md.
+This module is proprietary software, licensed under the
+[ParadoxLabs software license](https://store.paradoxlabs.com/license.html). See license.txt.
