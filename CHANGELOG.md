@@ -1,5 +1,10 @@
 # ParadoxLabs_CaratHyvaCheckout Changelog
 
+## 1.1.0 - Nov 16, 2026
+
+- Added Hyva Checkout 3.x support (3.0.1+). Requires Hyva's `Hyva_CheckoutV1bc` module, enabled by default.
+- Fixed an unavailable payment method (for example, missing API keys) breaking the payment step.
+
 ## 1.0.0 - Sep 15, 2026
 
 - Initial release: Carat (Fiserv Commerce Hub) Checkout SDK hosted payment fields support for Hyva Checkout.
