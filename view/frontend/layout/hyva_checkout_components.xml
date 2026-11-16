@@ -18,12 +18,5 @@
                 </arguments>
             </block>
         </referenceBlock>
-        <referenceContainer name="magewire.plugin.scripts">
-            <block class="ParadoxLabs\CaratHyvaCheckout\Block\CheckoutTemplate" name="script-paradoxlabs_carat" template="ParadoxLabs_CaratHyvaCheckout::checkout/scripts.phtml" ifconfig="payment/paradoxlabs_carat/active">
-                <arguments>
-                    <argument name="method_code" xsi:type="string">paradoxlabs_carat</argument>
-                </arguments>
-            </block>
-        </referenceContainer>
     </body>
 </page>

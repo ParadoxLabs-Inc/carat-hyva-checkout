@@ -24,6 +24,7 @@ use Magento\Framework\Exception\LocalizedException;
 use Magento\Framework\Exception\NoSuchEntityException;
 use Magento\Quote\Api\Data\CartInterface;
 use Magewirephp\Magewire\Component\Form;
+use Magewirephp\Magewire\Features\SupportMagewireBackwardsCompatibility\HandleBackwardsCompatibility;
 use ParadoxLabs\CaratHyvaCheckout\ViewModel\PaymentForm;
 use ParadoxLabs\TokenBase\Api\CardRepositoryInterface;
 use ParadoxLabs\TokenBase\Api\Data\CardInterface;
@@ -39,7 +40,10 @@ use Throwable;
  * scripts.phtml); this component owns the stored-card list and the place-order evaluation. The
  * tokenized payment session is amount-agnostic — the charge amount is set server-side at sale —
  * so no quote-total sync with the browser is needed.
+ *
+ * Native Magewire 3 on Hyva Checkout 3.x, with or without v1bc; Magewire 1 (Checkout 1.x) ignores the attribute.
  */
+#[HandleBackwardsCompatibility(enabled: false)]
 class Carat extends Form implements EvaluationInterface
 {
     protected const METHOD_CODE = 'paradoxlabs_carat';
